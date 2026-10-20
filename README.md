@@ -27,6 +27,7 @@ RankForge investigates a keyword, collects search results through a configured p
 - **Historical comparisons:** detect added, removed and moved URLs and domain changes across saved runs, keyed by source so the same URL in two providers remains distinct.
 - **Futuristic command center:** responsive dark interface, motion-aware visuals, source-aware result explorer, audit telemetry, evidence-led strategy roadmap, opportunity lab, content blueprint, history comparison and CSV export.
 - **Ranking strategy engine:** transparent prioritized actions, a 30-day improvement cycle, sampled competitor-domain coverage, title-term signals, and research ideas explicitly marked as having no validated search-volume data.
+- **Optional AI evidence analyst:** when explicitly enabled with an OpenAI API key, generate structured observations, actions and content direction from bounded result metadata. Model-suggested evidence URLs are restricted to URLs present in the run; AI is off by default and does not publish changes.
 - **Bounded site crawl:** same-host sitemap discovery, conservative robots exclusions, a capped multi-page audit, and duplicate title/description signals.
 - **Durable monitoring:** database-backed recurring missions, job leases, manual run-now, failure history and bounded retry backoff. Run python -m rankforge.worker separately to execute schedules.
 - **Monitoring hub:** /monitoring provides a dedicated mission builder for creating, pausing, resuming and executing scheduled keyword monitors.
@@ -265,6 +266,8 @@ curl -X POST http://127.0.0.1:8000/api/missions/1/run
 ~~~
 
 The site crawl respects a conservative subset of robots directives, restricts discovered pages to the supplied hostname, and caps the audit at 30 pages. This protects against unbounded crawls but is not a replacement for a standards-complete crawler.
+
+Optional OpenAI analysis is disabled by default. Add OPENAI_API_KEY and set RANKFORGE_AI_ANALYSIS=true in the server environment to enable it; OPENAI_MODEL selects the model. Results without AI configuration remain fully usable with deterministic strategy synthesis. AI suggestions are stored as proposals, are bounded to the evidence supplied, and never auto-publish to a website.
 
 The strategy report is saved in each run's content blueprint under content_brief.strategy. It includes sampled visibility, observed title-term signals, query ideas with no implied search volume, evidence-linked actions, and a 30-day improvement cycle. These are research aids; they do not guarantee rankings.
 
