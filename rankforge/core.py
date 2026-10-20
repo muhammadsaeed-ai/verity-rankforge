@@ -112,7 +112,9 @@ def compare_runs(first_id: int, second_id: int):
     return {
         "first_run_id": first_id, "second_run_id": second_id,
         "keyword_match": first["keyword"].casefold() == second["keyword"].casefold(),
-        "compatible_context": all(first[k] == second[k] for k in ("provider", "market", "language", "demo_mode"))
+        "compatible_context": first["keyword"].casefold() == second["keyword"].casefold()
+                              and first.get("website") == second.get("website")
+                              and all(first[k] == second[k] for k in ("provider", "market", "language", "demo_mode"))
                               and first["metrics"].get("requested_depth") == second["metrics"].get("requested_depth")
                               and first_sources == second_sources,
         "sources_match": first_sources == second_sources,
