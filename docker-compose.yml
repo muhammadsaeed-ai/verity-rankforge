@@ -1,0 +1,30 @@
+services:
+  api:
+    build: .
+    image: verity-rankforge:local
+    env_file:
+      - .env
+    environment:
+      RANKFORGE_DB_PATH: /app/data/rankforge.sqlite3
+    ports:
+      - "\${RANKFORGE_PORT:-8000}:8000"
+    volumes:
+      - rankforge-data:/app/data
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: verity-rankforge:local
+    command: ["python", "-m", "rankforge.worker"]
+    env_file:
+      - .env
+    environment:
+      RANKFORGE_DB_PATH: /app/data/rankforge.sqlite3
+    volumes:
+      - rankforge-data:/app/data
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+volumes:
+  rankforge-data:
