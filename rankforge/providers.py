@@ -63,12 +63,24 @@ class BraveProvider:
         self.api_key, self.timeout = api_key, timeout
 
     def search(self, keyword: str, market: str, language: str, depth: int) -> list[SearchResult]:
-        country_map = {"united states": "US", "united kingdom": "GB", "pakistan": "PK", "canada": "CA", "australia": "AU", "india": "IN"}
+        country_map = {
+            "united states": "US", "united states of america": "US", "us": "US",
+            "united kingdom": "GB", "uk": "GB", "gb": "GB",
+            "pakistan": "PK", "pk": "PK", "canada": "CA", "ca": "CA",
+            "australia": "AU", "au": "AU", "india": "IN", "in": "IN",
+        }
+        country_code = country_map.get(market.strip().casefold())
+        if not country_code:
+            raise ProviderError(
+                "Unsupported Brave Search market. Current supported markets: United States, United Kingdom, "
+                "Pakistan, Canada, Australia, India. Use the provider's country code or contact the maintainer "
+                "to add verified location support."
+            )
         try:
             response = httpx.get(
                 "https://api.search.brave.com/res/v1/web/search",
                 headers={"Accept": "application/json", "X-Subscription-Token": self.api_key},
-                params={"q": keyword, "country": country_map.get(market.lower(), market[:2].upper()), "search_lang": language[:2].lower(), "count": min(depth, 20)},
+                params={"q": keyword, "country": country_code, "search_lang": language[:2].lower(), "count": min(depth, 20)},
                 timeout=self.timeout,
             )
             response.raise_for_status()
@@ -94,8 +106,20 @@ class DataForSEOProvider:
         self.login, self.password, self.timeout = login, password, timeout
 
     def search(self, keyword: str, market: str, language: str, depth: int) -> list[SearchResult]:
-        locations = {"united states": 2840, "united kingdom": 2826, "pakistan": 2436, "canada": 2124, "australia": 2036, "india": 2356}
-        payload = [{"keyword": keyword, "location_code": locations.get(market.lower(), 2840), "language_code": language[:2].lower(), "depth": min(depth, 20)}]
+        locations = {
+            "united states": 2840, "united states of america": 2840, "us": 2840,
+            "united kingdom": 2826, "uk": 2826, "gb": 2826,
+            "pakistan": 2436, "pk": 2436, "canada": 2124, "ca": 2124,
+            "australia": 2036, "au": 2036, "india": 2356, "in": 2356,
+        }
+        location_code = locations.get(market.strip().casefold())
+        if location_code is None:
+            raise ProviderError(
+                "Unsupported DataForSEO market. Current supported markets: United States, United Kingdom, "
+                "Pakistan, Canada, Australia, India. This adapter refuses to silently substitute United States "
+                "for an unknown market."
+            )
+        payload = [{"keyword": keyword, "location_code": location_code, "language_code": language[:2].lower(), "depth": min(depth, 20)}]
         try:
             response = httpx.post("https://api.dataforseo.com/v3/serp/google/organic/live/advanced", auth=(self.login, self.password), json=payload, timeout=self.timeout)
             response.raise_for_status()
