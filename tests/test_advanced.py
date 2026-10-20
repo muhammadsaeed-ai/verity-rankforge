@@ -139,6 +139,13 @@ def test_monitoring_api_and_console_round_trip(tmp_path, monkeypatch):
         page = client.get("/monitoring")
         assert page.status_code == 200
         assert "MISSION BUILDER" in page.text
+        execution = client.post(f"/api/missions/{mission['id']}/run", json={})
+        assert execution.status_code == 200, execution.text
+        assert execution.json()["run"]["demo_mode"] is True
+        run_id = execution.json()["run"]["id"]
+        strategy = client.get(f"/api/runs/{run_id}/strategy")
+        assert strategy.status_code == 200
+        assert strategy.json()["engine"] == "Verity RankForge Strategy Engine"
         paused = client.patch(f"/api/missions/{mission['id']}", json={"enabled": False})
         assert paused.status_code == 200
         assert paused.json()["enabled"] is False
@@ -146,3 +153,34 @@ def test_monitoring_api_and_console_round_trip(tmp_path, monkeypatch):
             "keyword": "sample keyword", "interval_minutes": 15
         })
         assert too_frequent.status_code == 422
+
+
+def test_crawl_site_aggregates_duplicate_metadata_without_network(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "validate_public_url", lambda url: url if "://" in url else "https://" + url)
+    sitemap = """<?xml version="1.0"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://brand.example/</loc></url>
+      <url><loc>https://brand.example/services</loc></url>
+    </urlset>"""
+
+    def fake_fetch(url, hostname, max_bytes=crawler.MAX_SITEMAP_BYTES):
+        if url.endswith("/robots.txt"):
+            return "Sitemap: https://brand.example/sitemap.xml"
+        if url.endswith("/sitemap.xml"):
+            return sitemap
+        return None
+
+    def fake_audit(url):
+        return {
+            "url": url, "final_url": url, "title": "Brand Services", "meta_description": "Same description",
+            "score": 80, "issues": [{"title": "Missing canonical link", "priority": "P2"}],
+        }
+
+    monkeypatch.setattr(crawler, "_fetch_text", fake_fetch)
+    monkeypatch.setattr(core, "audit_website", fake_audit)
+    result = crawler.crawl_site("https://brand.example/", max_pages=10)
+    assert result["pages_audited"] == 2
+    assert result["page_failures"] == []
+    assert len(result["duplicate_signals"]["titles"]) == 1
+    assert len(result["duplicate_signals"]["meta_descriptions"]) == 1
+    assert result["common_issues"] == [{"issue": "Missing canonical link", "page_count": 2}]
