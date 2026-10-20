@@ -219,7 +219,7 @@ docker compose ps
 docker compose logs -f api worker
 ~~~
 
-The dashboard is available at http://localhost:8000. Set `RANKFORGE_PORT` in `.env` to change the host port. Stop the services with `docker compose down`; the named `rankforge-data` volume preserves SQLite history and monitoring missions.
+The dashboard is available at http://localhost:8000. Change the host-side port mapping in `docker-compose.yml` if port 8000 is already occupied. Stop the services with `docker compose down`; the named `rankforge-data` volume preserves SQLite history and monitoring missions.
 
 To run only the API container manually:
 
