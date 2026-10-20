@@ -177,6 +177,17 @@ def run_detail(run_id: int):
     return row
 
 
+@app.get("/api/runs/{run_id}/strategy")
+def strategy_detail(run_id: int):
+    row = core.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    strategy = (row.get("content_brief") or {}).get("strategy")
+    if strategy is None:
+        raise HTTPException(status_code=409, detail="This older run has no strategy report. Re-run the keyword analysis to generate one.")
+    return strategy
+
+
 @app.post("/api/compare")
 def compare(request: CompareRequest):
     if request.first_run_id == request.second_run_id:
