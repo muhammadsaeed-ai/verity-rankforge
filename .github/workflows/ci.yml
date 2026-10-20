@@ -1,0 +1,25 @@
+name: Quality Gate
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package and test tools
+        run: python -m pip install -e ".[dev]"
+      - name: Compile Python source
+        run: python -m compileall -q rankforge tests
+      - name: Run regression tests
+        run: python -m pytest
