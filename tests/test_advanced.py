@@ -33,6 +33,7 @@ def test_multi_provider_keeps_provenance_and_reports_partial_failures():
 
 
 def test_multi_source_run_preserves_rank_per_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("RANKFORGE_AI_ANALYSIS", "false")
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "runs.sqlite3"))
     core.init_db()
 
@@ -124,6 +125,7 @@ def test_monitoring_missions_are_durable_and_leased(tmp_path, monkeypatch):
 def test_monitoring_api_and_console_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "api-monitor.sqlite3"))
     monkeypatch.setenv("RANKFORGE_PROVIDER", "demo")
+    monkeypatch.setenv("RANKFORGE_AI_ANALYSIS", "false")
     with TestClient(main.app) as client:
         response = client.post("/api/missions", json={
             "keyword": "AI automation agency",
