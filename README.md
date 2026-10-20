@@ -19,13 +19,17 @@
 RankForge investigates a keyword, collects search results through a configured provider, audits an optional target page, and turns the available evidence into a prioritized SEO action queue. Every completed run is saved in SQLite so users can revisit observations and compare changes.
 
 - **Keyword intelligence:** modifier-based intent hypothesis, result sample, observed positions, unique-domain distribution, and target-domain presence checks.
-- **Real search integrations:** Brave Search API and DataForSEO Google organic SERP API.
+- **Real search integrations:** Brave Search API and DataForSEO Google organic SERP API, with source-aware multi-provider collection when both credentials are configured. Native provider positions are preserved and cross-source URL overlap is measured without blending ranking positions.
 - **Honest local mode:** deterministic synthetic results when no provider key is configured; sample results are explicitly marked **DEMO** and use example domains.
 - **Single-page SEO audit:** title, meta description, headings, image alt attributes, canonical link, robots noindex, word count, HTTP response and internal-link candidates.
 - **SEO content blueprint:** title, description and H1 candidates, a content outline, and observed result-title signals; drafts require editorial validation.
 - **Prioritized opportunities:** priority, rationale, next action, estimated effort, evidence and limitations.
-- **Historical comparisons:** detect added, removed and moved URLs and domain changes across saved runs.
-- **Futuristic command center:** responsive dark interface, motion-aware visuals, result explorer, audit telemetry, opportunity lab, content blueprint, history comparison and CSV export.
+- **Historical comparisons:** detect added, removed and moved URLs and domain changes across saved runs, keyed by source so the same URL in two providers remains distinct.
+- **Futuristic command center:** responsive dark interface, motion-aware visuals, source-aware result explorer, audit telemetry, evidence-led strategy roadmap, opportunity lab, content blueprint, history comparison and CSV export.
+- **Ranking strategy engine:** transparent prioritized actions, a 30-day improvement cycle, sampled competitor-domain coverage, title-term signals, and research ideas explicitly marked as having no validated search-volume data.
+- **Bounded site crawl:** same-host sitemap discovery, conservative robots exclusions, a capped multi-page audit, and duplicate title/description signals.
+- **Durable monitoring:** database-backed recurring missions, job leases, manual run-now, failure history and bounded retry backoff. Run python -m rankforge.worker separately to execute schedules.
+- **Monitoring hub:** /monitoring provides a dedicated mission builder for creating, pausing, resuming and executing scheduled keyword monitors.
 - **Developer interfaces:** FastAPI endpoints, OpenAPI docs, CLI, Dockerfile, and CI regression tests.
 
 > **No false promises:** RankForge does not guarantee the #1 position, silently replace failed live API calls with fake data, or automatically publish website changes. SEO performance depends on the site, users, competitors, search systems and many factors outside this application.
@@ -55,7 +59,7 @@ cp .env.example .env
 uvicorn rankforge.main:app --reload
 ~~~
 
-Open http://127.0.0.1:8000. API documentation is at http://127.0.0.1:8000/docs and service status is at http://127.0.0.1:8000/api/health.
+Open http://127.0.0.1:8000. The monitoring console is at http://127.0.0.1:8000/monitoring, API documentation is at http://127.0.0.1:8000/docs, and service status is at http://127.0.0.1:8000/api/health. Start a second terminal with python -m rankforge.worker to execute saved schedules.
 
 Without credentials the application uses deterministic sample results. These are **not actual rankings**. Set a provider before using data for business decisions.
 
@@ -80,7 +84,7 @@ DATAFORSEO_PASSWORD=replace-with-your-password
 
 **Automatic selection**
 
-Set RANKFORGE_PROVIDER to auto. The application selects DataForSEO when both credentials are supplied, otherwise Brave when its key is supplied, otherwise the clearly disclosed demo provider. A live provider failure returns an actionable error; it does not quietly substitute sample results. Provider pricing, quotas, supported locations and language options, and terms apply.
+Set RANKFORGE_PROVIDER=auto. The application selects multi-source mode when both DataForSEO and Brave credentials are supplied, otherwise the single configured live provider, otherwise the clearly disclosed demo provider. Set RANKFORGE_PROVIDER=multi to require both live sources explicitly. If one source fails, the run retains available results and records a provider warning; if all sources fail, the run fails without substituting demo results. Provider pricing, quotas, supported locations and language options, and terms apply.
 
 Other runtime settings are documented in .env.example. API keys must only be supplied by the server operator.
 
@@ -206,7 +210,9 @@ This release is a working research and diagnostics foundation, not a complete au
 
 - Intent classification uses transparent keyword modifiers; it is not a trained semantic classifier.
 - The auditor inspects one HTML response. It does not yet crawl a full site, render JavaScript, evaluate Core Web Vitals, inspect Search Console via OAuth, or comprehensively validate XML sitemaps and robots.txt.
-- Search observations are synchronous snapshots. Durable scheduling, queue workers, adaptive sampling, alert delivery and background monitoring are planned but not yet implemented.
+- Search observations are synchronous snapshots, while recurring monitors execute through a separate durable worker process. Adaptive sampling, alert delivery and fully autonomous website changes are not implemented.
+- Site discovery is a bounded sitemap-led sample capped at 30 pages. Robots handling is deliberately conservative, and JavaScript-rendered content may be missed.
+- Multi-source collection compares result sets; it intentionally does not report a blended mean rank across different providers.
 - Content briefs are deterministic starting drafts. An LLM research layer, deeper content-gap extraction, CMS integrations and approval-based change proposals are future work.
 - The application does not automatically edit or deploy a website, and it cannot promise rankings. The heuristic audit score is not a Google score.
 - Authentication and tenant isolation are not included. Put an authentication layer and network controls in front of any internet-facing deployment; do not run the development console as a public multi-user service.
@@ -225,6 +231,42 @@ Issues and pull requests are welcome. Include a reproduction case and a regressi
 ## Maintained by VerityAgent
 
 Built as an open-source product initiative by **VerityAgent**.
+
+
+## Advanced monitoring and site intelligence
+
+Start the API and the worker in two terminals. The worker polls the SQLite-backed mission table, claims due jobs with a lease to reduce duplicate execution, and records successful run IDs or errors. The minimum recurring interval is 60 minutes; transient failures use a bounded retry backoff.
+
+~~~bash
+# Terminal 1: API and dashboard
+uvicorn rankforge.main:app --reload
+
+# Terminal 2: recurring mission worker
+python -m rankforge.worker
+~~~
+
+The dashboard at /monitoring creates and manages recurring keyword missions. Use the API for bounded site discovery and deeper integrations:
+
+~~~bash
+# Audit up to 20 discovered pages
+curl -X POST http://127.0.0.1:8000/api/crawl \
+  -H "Content-Type: application/json" \
+  -d '{"website":"https://example.com","max_pages":20}'
+
+# Create a daily keyword observation (first run is due immediately)
+curl -X POST http://127.0.0.1:8000/api/missions \
+  -H "Content-Type: application/json" \
+  -d '{"keyword":"AI automation agency","website":"https://example.com","market":"United States","language":"en","depth":10,"interval_minutes":1440}'
+
+# List missions, pause/resume, or execute a mission immediately
+curl http://127.0.0.1:8000/api/missions
+curl -X PATCH http://127.0.0.1:8000/api/missions/1 -H "Content-Type: application/json" -d '{"enabled":false}'
+curl -X POST http://127.0.0.1:8000/api/missions/1/run
+~~~
+
+The site crawl respects a conservative subset of robots directives, restricts discovered pages to the supplied hostname, and caps the audit at 30 pages. This protects against unbounded crawls but is not a replacement for a standards-complete crawler.
+
+The strategy report is saved in each run's content blueprint under content_brief.strategy. It includes sampled visibility, observed title-term signals, query ideas with no implied search volume, evidence-linked actions, and a 30-day improvement cycle. These are research aids; they do not guarantee rankings.
 
 ## License
 
