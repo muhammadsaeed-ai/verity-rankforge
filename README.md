@@ -143,38 +143,54 @@ curl -o rankforge-history.csv "http://127.0.0.1:8000/api/export.csv?limit=100"
 | POST | /api/audit | Inspect a supplied page's HTML SEO signals |
 | GET | /api/history | List saved runs; optional keyword filter |
 | GET | /api/runs/{run_id} | Retrieve a saved run |
-| POST | /api/compare | Compare two runs |
+| POST | /api/compare | Compare two runs with source-aware result identity |
+| POST | /api/crawl | Bounded sitemap-led multi-page audit |
+| GET | /api/missions | List durable recurring monitors |
+| POST | /api/missions | Create a recurring monitor (60-minute minimum interval) |
+| PATCH | /api/missions/{mission_id} | Pause or resume a monitor |
+| POST | /api/missions/{mission_id}/run | Execute a monitor immediately |
+| GET | /api/runs/{run_id}/strategy | Retrieve the saved strategy report |
+| GET | /monitoring | Mission builder and schedule console |
 | GET | /api/intent?keyword=... | Return the initial intent hypothesis |
 | GET | /api/export.csv | Export a bounded run-history summary |
 
 ## Architecture
 
 ~~~mermaid
-flowchart LR
-  UI["Futuristic dashboard"] --> API["FastAPI / CLI"]
-  API --> SEL["Provider selector"]
-  SEL --> BR["Brave Search API"]
-  SEL --> DF["DataForSEO Google SERP"]
-  SEL --> DEMO["Labeled demo dataset"]
-  BR --> N["Normalize and deduplicate"]
-  DF --> N
-  DEMO --> N
-  N --> DB[("SQLite evidence store")]
-  API --> AUD["Single-page SEO audit"]
-  DB --> CMP["Temporal run comparison"]
-  CMP --> OP["Prioritized opportunities"]
-  AUD --> OP
-  OP --> UI
+flowchart TD
+  UI["Futuristic command center"] --> API["FastAPI / CLI"]
+  API --> SELECT["Provider registry"]
+  SELECT --> BRAVE["Brave Search API"]
+  SELECT --> DFS["DataForSEO Google SERP"]
+  SELECT --> DEMO["Clearly labeled demo data"]
+  BRAVE --> NORM["Source-aware normalization"]
+  DFS --> NORM
+  DEMO --> NORM
+  NORM --> DB[("SQLite runs + monitoring missions")]
+  API --> CRAWL["Bounded sitemap-led crawler"]
+  API --> STRATEGY["Deterministic strategy engine"]
+  DB --> DIFF["Source-aware temporal diff"]
+  DIFF --> STRATEGY
+  STRATEGY --> AI["Optional OpenAI evidence analyst"]
+  AI --> UI
+  DB --> WORKER["Separate recurring monitor worker"]
+  WORKER --> SELECT
+  CRAWL --> STRATEGY
 ~~~
 
 | Module | Responsibility |
 |---|---|
-| rankforge/providers.py | Brave, DataForSEO, demo adapter, and explicit provider selection |
-| rankforge/core.py | Intent heuristic, result metrics, site audit, content brief, SQLite history, comparisons and opportunities |
-| rankforge/main.py | REST API, CSV export, and dashboard serving |
-| rankforge/cli.py | JSON-output command-line client |
-| web/index.html | Responsive command center and API-backed interactions |
-| tests/test_core.py | Regression tests using deterministic data and temporary SQLite databases |
+| rankforge/providers.py | Brave, DataForSEO, demo, and source-aware multi-provider adapter |
+| rankforge/core.py | Page audit, normalization, source-aware metrics, SQLite run history, comparisons and opportunities |
+| rankforge/strategy.py | Deterministic, evidence-grounded action plan and 30-day improvement cycle |
+| rankforge/analyst.py | Optional OpenAI analysis with bounded inputs and evidence URL validation |
+| rankforge/crawler.py | Bounded same-host sitemap discovery and multi-page SEO checks |
+| rankforge/monitoring.py | Durable monitoring missions, job leases, scheduling and retry backoff |
+| rankforge/worker.py | Separate background worker for recurring missions |
+| rankforge/main.py | REST API, strategy/crawl/monitor endpoints, CSV export and UI serving |
+| web/index.html | Responsive futuristic command center with source-aware evidence and strategy report |
+| web/monitoring.html | Mission builder, schedule monitor and bounded site-crawl console |
+| tests/test_core.py, tests/test_api.py, tests/test_advanced.py, tests/test_analyst.py | Deterministic, API, workflow, crawler and optional-AI regression tests |
 
 ## CLI usage
 
@@ -210,11 +226,11 @@ Set the chosen provider credentials as environment variables at runtime to enabl
 This release is a working research and diagnostics foundation, not a complete autonomous SEO platform.
 
 - Intent classification uses transparent keyword modifiers; it is not a trained semantic classifier.
-- The auditor inspects one HTML response. It does not yet crawl a full site, render JavaScript, evaluate Core Web Vitals, inspect Search Console via OAuth, or comprehensively validate XML sitemaps and robots.txt.
-- Search observations are synchronous snapshots, while recurring monitors execute through a separate durable worker process. Adaptive sampling, alert delivery and fully autonomous website changes are not implemented.
+- The auditor inspects one HTML response per URL in a bounded sitemap-led sample. JavaScript rendering, Core Web Vitals and Search Console OAuth are not implemented; sitemap and robots handling is conservative rather than standards-complete.
+- Search observations are synchronous snapshots, while recurring monitors execute through a separate durable worker process. Adaptive sampling, alert delivery, CMS integrations and fully autonomous website changes are not implemented.
 - Site discovery is a bounded sitemap-led sample capped at 30 pages. Robots handling is deliberately conservative, and JavaScript-rendered content may be missed.
 - Multi-source collection compares result sets; it intentionally does not report a blended mean rank across different providers.
-- Content briefs are deterministic starting drafts. An LLM research layer, deeper content-gap extraction, CMS integrations and approval-based change proposals are future work.
+- Content briefs start with deterministic drafts; optional OpenAI evidence analysis can be enabled via environment credentials. Deep page-content extraction, Search Console integration and CMS change workflows remain future work.
 - The application does not automatically edit or deploy a website, and it cannot promise rankings. The heuristic audit score is not a Google score.
 - Authentication and tenant isolation are not included. Put an authentication layer and network controls in front of any internet-facing deployment; do not run the development console as a public multi-user service.
 
