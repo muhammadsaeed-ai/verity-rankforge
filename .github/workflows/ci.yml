@@ -17,9 +17,25 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install package and test tools
         run: python -m pip install -e ".[dev]"
       - name: Compile Python source
         run: python -m compileall -q rankforge tests
-      - name: Run regression tests
+      - name: Validate dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("web/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.DOTALL)
+          if not scripts:
+              raise SystemExit("No inline dashboard script found")
+          Path("/tmp/rankforge-dashboard.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/rankforge-dashboard.js
+      - name: Run regression and API tests
         run: python -m pytest
