@@ -95,29 +95,34 @@ def compare_runs(first_id: int, second_id: int):
     first, second = get_run(first_id), get_run(second_id)
     if not first or not second:
         return None
-    old = {row["url"]: row for row in first["results"]}
-    new = {row["url"]: row for row in second["results"]}
+    old = {(row.get("source") or first["provider"], row["url"]): row for row in first["results"]}
+    new = {(row.get("source") or second["provider"], row["url"]): row for row in second["results"]}
     old_domains = {row.get("domain", "").lower().removeprefix("www.") for row in first["results"]}
     new_domains = {row.get("domain", "").lower().removeprefix("www.") for row in second["results"]}
     moved = []
-    for url in old.keys() & new.keys():
-        before, after = old[url].get("position"), new[url].get("position")
+    for key in old.keys() & new.keys():
+        before, after = old[key].get("position"), new[key].get("position")
         if before != after:
-            moved.append({"url": url, "title": new[url].get("title", old[url].get("title", "")),
+            moved.append({"source": key[0], "url": key[1],
+                          "title": new[key].get("title", old[key].get("title", "")),
                           "from_position": before, "to_position": after,
                           "delta": before - after if isinstance(before, int) and isinstance(after, int) else None})
+    first_sources = sorted({row.get("source") or first["provider"] for row in first["results"]})
+    second_sources = sorted({row.get("source") or second["provider"] for row in second["results"]})
     return {
         "first_run_id": first_id, "second_run_id": second_id,
         "keyword_match": first["keyword"].casefold() == second["keyword"].casefold(),
         "compatible_context": all(first[k] == second[k] for k in ("provider", "market", "language", "demo_mode"))
-                              and first["metrics"].get("requested_depth") == second["metrics"].get("requested_depth"),
-        "added": [row for url, row in new.items() if url not in old],
-        "removed": [row for url, row in old.items() if url not in new],
-        "moved": sorted(moved, key=lambda item: item["from_position"] or 999),
+                              and first["metrics"].get("requested_depth") == second["metrics"].get("requested_depth")
+                              and first_sources == second_sources,
+        "sources_match": first_sources == second_sources,
+        "first_sources": first_sources, "second_sources": second_sources,
+        "added": [row for key, row in new.items() if key not in old],
+        "removed": [row for key, row in old.items() if key not in new],
+        "moved": sorted(moved, key=lambda item: (item["source"], item["from_position"] or 999)),
         "domain_gained": sorted(new_domains - old_domains), "domain_lost": sorted(old_domains - new_domains),
-        "note": "Comparisons are strongest when keyword, provider, market, language, depth, and collection conditions match. Differences do not establish causation.",
+        "note": "Comparisons are strongest when keyword, provider set, market, language, depth and collection conditions match. Differences do not establish causation.",
     }
-
 
 BUYING_TERMS = {"buy", "price", "pricing", "cost", "agency", "service", "services", "software", "tool", "tools", "best", "review", "comparison", "vs", "near me"}
 INFO_TERMS = {"what", "why", "how", "guide", "tutorial", "examples", "meaning", "ideas", "learn", "checklist", "tips"}
@@ -385,12 +390,18 @@ def run_analysis(keyword: str, website: str | None, market: str, language: str, 
     for item in results:
         url = str(item.get("url", "")).strip()
         parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname or url in seen:
+        source = str(item.get("source") or provider.name)
+        dedupe_key = (source.casefold(), url.casefold())
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or dedupe_key in seen:
             continue
-        seen.add(url)
-        unique.append({"position": len(unique) + 1, "title": str(item.get("title", ""))[:500], "url": url,
+        seen.add(dedupe_key)
+        position = item.get("position")
+        if not isinstance(position, int) or position < 1:
+            position = sum(1 for row in unique if row.get("source") == source) + 1
+        unique.append({"position": position, "title": str(item.get("title", ""))[:500], "url": url,
                        "snippet": str(item.get("snippet", ""))[:2000],
-                       "domain": str(item.get("domain") or parsed.hostname).lower()})
+                       "domain": str(item.get("domain") or parsed.hostname).lower(),
+                       "source": source, "source_demo": bool(item.get("source_demo", provider.demo))})
     if not unique:
         raise RuntimeError("The provider returned no usable search results. Check credentials, quota, and market settings.")
     audit, audit_error = None, None
@@ -401,12 +412,41 @@ def run_analysis(keyword: str, website: str | None, market: str, language: str, 
             audit_error = str(exc)
     metrics = result_metrics(unique, depth)
     metrics["intent"] = infer_intent(keyword)
+    source_names = sorted({row["source"] for row in unique})
+    metrics["sources"] = source_names
+    metrics["source_metrics"] = []
+    source_url_sets = {}
+    for source in source_names:
+        source_rows = [row for row in unique if row["source"] == source]
+        source_metric = result_metrics(source_rows, depth)
+        source_metric["source"] = source
+        metrics["source_metrics"].append(source_metric)
+        source_url_sets[source] = {row["url"].casefold() for row in source_rows}
+    metrics["cross_source_agreement"] = []
+    for index, source_a in enumerate(source_names):
+        for source_b in source_names[index + 1:]:
+            a_urls, b_urls = source_url_sets[source_a], source_url_sets[source_b]
+            union = a_urls | b_urls
+            metrics["cross_source_agreement"].append({
+                "source_a": source_a, "source_b": source_b,
+                "jaccard": round(len(a_urls & b_urls) / len(union), 4) if union else 1.0,
+                "shared_urls": len(a_urls & b_urls), "union_urls": len(union),
+            })
+    if len(source_names) > 1:
+        # A blended mean rank across different indexes is not statistically meaningful.
+        metrics["mean_observed_position"] = None
+    if getattr(provider, "last_errors", None):
+        metrics["provider_warnings"] = provider.last_errors
     from urllib.parse import urlparse as parse_url
     host = (parse_url(website).hostname or "").lower() if website else ""
     present = any((parse_url(row["url"]).hostname or "").lower().removeprefix("www.") == host.removeprefix("www.") for row in unique) if host else None
     metrics["target_domain_found_in_sample"] = present
     brief = build_content_brief(keyword, unique, website, audit)
     opportunities = build_opportunities(keyword, unique, website, audit)
+    from .strategy import build_strategy_report
+    strategy = build_strategy_report(keyword, website, market, language, provider.name, bool(provider.demo),
+                                     unique, audit, opportunities)
+    brief["strategy"] = strategy
     return save_run({"keyword": keyword, "website": website, "market": market, "language": language,
                      "provider": provider.name, "demo_mode": bool(provider.demo), "results": unique,
                      "metrics": metrics, "audit": audit, "audit_error": audit_error,
