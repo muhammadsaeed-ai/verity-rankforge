@@ -211,6 +211,18 @@ GitHub Actions runs compilation and regression tests on pushes and pull requests
 
 ## Docker
 
+**Recommended: run the API and recurring monitoring worker together with Docker Compose.** First copy `.env.example` to `.env` and add any provider credentials.
+
+~~~bash
+docker compose up --build -d
+docker compose ps
+docker compose logs -f api worker
+~~~
+
+The dashboard is available at http://localhost:8000. Set `RANKFORGE_PORT` in `.env` to change the host port. Stop the services with `docker compose down`; the named `rankforge-data` volume preserves SQLite history and monitoring missions.
+
+To run only the API container manually:
+
 ~~~bash
 docker build -t verity-rankforge .
 docker run --rm -p 8000:8000 \
@@ -219,7 +231,7 @@ docker run --rm -p 8000:8000 \
   verity-rankforge
 ~~~
 
-Set the chosen provider credentials as environment variables at runtime to enable live data. The container runs as a non-root user and provides a health check.
+The manual container command does not run the scheduler; start a second worker process against the same database volume. The container runs as a non-root user and the API image provides a health check. Keep `.env` out of source control.
 
 ## Scope and limitations
 
