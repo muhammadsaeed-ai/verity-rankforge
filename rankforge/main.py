@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, core
+from . import __version__, core, crawler, monitoring
 from .providers import ProviderError, get_provider
 
 app = FastAPI(title="Verity RankForge API", version=__version__,
@@ -33,9 +33,28 @@ class CompareRequest(BaseModel):
     second_run_id: int = Field(gt=0)
 
 
+class CrawlRequest(BaseModel):
+    website: str = Field(min_length=8, max_length=2048)
+    max_pages: int = Field(default=20, ge=1, le=30)
+
+
+class MissionCreateRequest(BaseModel):
+    keyword: str = Field(min_length=2, max_length=180)
+    website: str | None = Field(default=None, max_length=2048)
+    market: str = Field(default="United States", min_length=2, max_length=80)
+    language: str = Field(default="en", min_length=2, max_length=12)
+    depth: int = Field(default=10, ge=5, le=20)
+    interval_minutes: int = Field(default=1440, ge=60, le=43200)
+
+
+class MissionToggleRequest(BaseModel):
+    enabled: bool
+
+
 @app.on_event("startup")
 def startup():
     core.init_db()
+    monitoring.init_db()
 
 
 @app.get("/api/health")
@@ -87,6 +106,61 @@ def audit(request: AuditRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Website audit failed: " + str(exc)) from exc
+
+
+@app.post("/api/crawl")
+def crawl(request: CrawlRequest):
+    try:
+        return crawler.crawl_site(request.website, request.max_pages)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Site crawl failed: " + str(exc)) from exc
+
+
+@app.get("/api/missions")
+def list_missions():
+    return {"missions": monitoring.list_missions()}
+
+
+@app.post("/api/missions")
+def create_mission(request: MissionCreateRequest):
+    try:
+        return monitoring.create_mission(
+            request.keyword, request.website, request.market, request.language,
+            request.depth, request.interval_minutes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.patch("/api/missions/{mission_id}")
+def toggle_mission(mission_id: int, request: MissionToggleRequest):
+    mission = monitoring.set_enabled(mission_id, request.enabled)
+    if mission is None:
+        raise HTTPException(status_code=404, detail="Monitoring mission not found")
+    return mission
+
+
+@app.post("/api/missions/{mission_id}/run")
+def run_mission_now(mission_id: int):
+    try:
+        return monitoring.run_now(mission_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Monitoring run failed: " + str(exc)) from exc
+
+
+@app.get("/monitoring")
+def monitoring_console():
+    return FileResponse(WEB_DIR / "monitoring.html")
 
 
 @app.get("/api/history")
