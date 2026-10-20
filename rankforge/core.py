@@ -444,8 +444,10 @@ def run_analysis(keyword: str, website: str | None, market: str, language: str, 
     brief = build_content_brief(keyword, unique, website, audit)
     opportunities = build_opportunities(keyword, unique, website, audit)
     from .strategy import build_strategy_report
+    from .analyst import enrich_strategy_report
     strategy = build_strategy_report(keyword, website, market, language, provider.name, bool(provider.demo),
                                      unique, audit, opportunities)
+    strategy = enrich_strategy_report(strategy, keyword, unique, audit, website)
     brief["strategy"] = strategy
     return save_run({"keyword": keyword, "website": website, "market": market, "language": language,
                      "provider": provider.name, "demo_mode": bool(provider.demo), "results": unique,
