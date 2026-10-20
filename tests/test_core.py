@@ -29,7 +29,7 @@ def test_demo_provider_is_deterministic_and_labeled():
     assert first == second
     assert len(first) == 5
     assert all("DEMO ONLY" in row["snippet"] for row in first)
-    assert all(".example" in row["url"] for row in first)
+    assert all("example." in row["url"] for row in first)
 
 
 def test_content_brief_is_reviewable_not_auto_published():
