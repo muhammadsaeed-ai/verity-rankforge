@@ -37,7 +37,7 @@ jobs:
               if not scripts:
                   raise SystemExit(f"No inline script found in {page}")
               output = Path("/tmp") / (Path(page).stem + ".js")
-              output.write_text("\\n".join(scripts), encoding="utf-8")
+              output.write_text("\n".join(scripts), encoding="utf-8")
               print(f"Extracted {len(scripts)} script(s) from {page} to {output}")
           PY
           node --check /tmp/index.js
