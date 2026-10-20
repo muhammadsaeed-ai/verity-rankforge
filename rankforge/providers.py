@@ -1,7 +1,7 @@
 """Search-provider adapters. Live calls are explicit; demo data is never mislabeled."""
 from __future__ import annotations
 import os
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 from urllib.parse import urlparse
 import httpx
 
@@ -12,6 +12,8 @@ class SearchResult(TypedDict):
     url: str
     snippet: str
     domain: str
+    source: NotRequired[str]
+    source_demo: NotRequired[bool]
 
 
 class ProviderError(RuntimeError):
@@ -120,8 +122,49 @@ class DataForSEOProvider:
         return output
 
 
+class MultiProvider:
+    """Aggregate multiple configured providers while preserving provider-specific ranks."""
+
+    demo = False
+
+    def __init__(self, providers: list):
+        if len(providers) < 2:
+            raise ProviderError("Multi-source mode requires at least two configured live search providers.")
+        self.providers = providers
+        self.name = "Multi-source: " + " + ".join(p.name for p in providers)
+        self.last_errors: list[dict[str, str]] = []
+
+    def search(self, keyword: str, market: str, language: str, depth: int) -> list[SearchResult]:
+        output: list[SearchResult] = []
+        self.last_errors = []
+        for provider in self.providers:
+            try:
+                rows = provider.search(keyword, market, language, depth)
+                for row in rows:
+                    output.append({
+                        **row,
+                        "source": provider.name,
+                        "source_demo": bool(provider.demo),
+                    })
+            except ProviderError as exc:
+                self.last_errors.append({"source": provider.name, "error": str(exc)[:500]})
+        if not output:
+            details = "; ".join(f"{item['source']}: {item['error']}" for item in self.last_errors)
+            raise ProviderError("All configured search providers failed. " + details)
+        return output
+
+
+def _live_providers(brave_key: str, dfs_login: str, dfs_password: str, timeout: int) -> list:
+    providers = []
+    if dfs_login and dfs_password:
+        providers.append(DataForSEOProvider(dfs_login, dfs_password, timeout))
+    if brave_key:
+        providers.append(BraveProvider(brave_key, timeout))
+    return providers
+
+
 def get_provider():
-    """Choose one real provider when configured; otherwise return marked demo data."""
+    """Choose a provider explicitly; auto selects multi-source when both live sources are configured."""
     selected = os.getenv("RANKFORGE_PROVIDER", "auto").strip().lower()
     timeout = max(2, min(int(os.getenv("RANKFORGE_REQUEST_TIMEOUT", "15")), 60))
     brave_key = os.getenv("BRAVE_API_KEY", "").strip()
@@ -133,10 +176,18 @@ def get_provider():
         return BraveProvider(brave_key, timeout)
     if selected == "dataforseo":
         return DataForSEOProvider(dfs_login, dfs_password, timeout)
+    if selected == "multi":
+        providers = _live_providers(brave_key, dfs_login, dfs_password, timeout)
+        if len(providers) < 2:
+            raise ProviderError(
+                "RANKFORGE_PROVIDER=multi requires both BRAVE_API_KEY and DATAFORSEO_LOGIN plus DATAFORSEO_PASSWORD."
+            )
+        return MultiProvider(providers)
     if selected != "auto":
-        raise ProviderError("RANKFORGE_PROVIDER must be auto, demo, brave, or dataforseo")
-    if dfs_login and dfs_password:
-        return DataForSEOProvider(dfs_login, dfs_password, timeout)
-    if brave_key:
-        return BraveProvider(brave_key, timeout)
+        raise ProviderError("RANKFORGE_PROVIDER must be auto, demo, brave, dataforseo, or multi")
+    providers = _live_providers(brave_key, dfs_login, dfs_password, timeout)
+    if len(providers) >= 2:
+        return MultiProvider(providers)
+    if providers:
+        return providers[0]
     return DemoProvider()
