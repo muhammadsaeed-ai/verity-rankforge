@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verity-rankforge"
+version = "0.1.0"
+description = "Evidence-led SEO research, technical audits, and ranking opportunity analysis by VerityAgent."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "VerityAgent"}]
+dependencies = ["fastapi>=0.115,<1.0", "uvicorn[standard]>=0.30,<1.0", "httpx>=0.27,<1.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9.0"]
+
+[project.scripts]
+rankforge = "rankforge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["rankforge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
