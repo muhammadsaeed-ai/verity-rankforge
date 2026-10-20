@@ -85,7 +85,7 @@ DATAFORSEO_PASSWORD=replace-with-your-password
 
 **Automatic selection**
 
-Set RANKFORGE_PROVIDER=auto. The application selects multi-source mode when both DataForSEO and Brave credentials are supplied, otherwise the single configured live provider, otherwise the clearly disclosed demo provider. Set RANKFORGE_PROVIDER=multi to require both live sources explicitly. If one source fails, the run retains available results and records a provider warning; if all sources fail, the run fails without substituting demo results. Provider pricing, quotas, supported locations and language options, and terms apply.
+Set RANKFORGE_PROVIDER=auto. The application selects multi-source mode when both DataForSEO and Brave credentials are supplied, otherwise the single configured live provider, otherwise the clearly disclosed demo provider. Set RANKFORGE_PROVIDER=multi to require both live sources explicitly. If one source fails, the run retains available results and records a provider warning; if all sources fail, the run fails without substituting demo results. Provider pricing, quotas, supported locations and language options, and terms apply. The current adapters explicitly support United States, United Kingdom, Pakistan, Canada, Australia and India; unsupported locations fail rather than silently returning US-targeted results.
 
 Other runtime settings are documented in .env.example. API keys must only be supplied by the server operator.
 
