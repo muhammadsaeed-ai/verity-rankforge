@@ -70,7 +70,7 @@ def test_api_rejects_invalid_mission_and_missing_run(tmp_path, monkeypatch):
     monkeypatch.setenv("RANKFORGE_API_KEY", TEST_API_KEY)
     monkeypatch.setenv("RANKFORGE_PROVIDER", "demo")
     monkeypatch.setenv("RANKFORGE_AI_ANALYSIS", "false")
-    with TestClient(main.app, auth=("verityagent", TEST_API_KEY)) as client:
+    with TestClient(main.app, headers=_auth_headers(TEST_API_KEY)) as client:
         bad = client.post("/api/analyze", json={"keyword": "x", "depth": 10})
         assert bad.status_code == 422
         missing = client.get("/api/runs/9999")
@@ -99,7 +99,7 @@ def test_protected_routes_fail_closed_and_health_remains_public(monkeypatch):
 def test_expensive_api_routes_are_rate_limited_per_client(monkeypatch):
     monkeypatch.setenv("RANKFORGE_API_KEY", TEST_API_KEY)
     main.app.state.rate_limit_buckets.clear()
-    with TestClient(main.app, auth=("verityagent", TEST_API_KEY)) as client:
+    with TestClient(main.app, headers=_auth_headers(TEST_API_KEY)) as client:
         for _ in range(5):
             response = client.post("/api/analyze", json={})
             assert response.status_code == 422
