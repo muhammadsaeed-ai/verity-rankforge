@@ -3,15 +3,19 @@ from rankforge import core
 from rankforge import main
 
 
+TEST_API_KEY = "test-rankforge-api-key-0123456789abcdef"
+
+
 def test_api_dashboard_and_analysis_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "api.sqlite3"))
+    monkeypatch.setenv("RANKFORGE_API_KEY", TEST_API_KEY)
     monkeypatch.setenv("RANKFORGE_PROVIDER", "demo")
     monkeypatch.setenv("RANKFORGE_AI_ANALYSIS", "false")
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
     monkeypatch.delenv("DATAFORSEO_LOGIN", raising=False)
     monkeypatch.delenv("DATAFORSEO_PASSWORD", raising=False)
 
-    with TestClient(main.app) as client:
+    with TestClient(main.app, auth=("verityagent", TEST_API_KEY)) as client:
         health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
@@ -65,3 +69,33 @@ def test_api_rejects_invalid_mission_and_missing_run(tmp_path, monkeypatch):
         assert missing.status_code == 404
         same = client.post("/api/compare", json={"first_run_id": 1, "second_run_id": 1})
         assert same.status_code == 422
+
+
+def test_protected_routes_fail_closed_and_health_remains_public(monkeypatch):
+    monkeypatch.setenv("RANKFORGE_API_KEY", TEST_API_KEY)
+    main.app.state.rate_limit_buckets.clear()
+    with TestClient(main.app) as anonymous:
+        assert anonymous.get("/api/health").status_code == 200
+        assert anonymous.get("/").status_code == 401
+        assert anonymous.get("/api/overview").status_code == 401
+
+    with TestClient(main.app, auth=("verityagent", "wrong-rankforge-api-key-0123456789")) as wrong:
+        assert wrong.get("/api/overview").status_code == 401
+
+    monkeypatch.delenv("RANKFORGE_API_KEY", raising=False)
+    with TestClient(main.app) as unconfigured:
+        assert unconfigured.get("/").status_code == 503
+        assert unconfigured.get("/api/health").status_code == 200
+
+
+def test_expensive_api_routes_are_rate_limited_per_client(monkeypatch):
+    monkeypatch.setenv("RANKFORGE_API_KEY", TEST_API_KEY)
+    main.app.state.rate_limit_buckets.clear()
+    with TestClient(main.app, auth=("verityagent", TEST_API_KEY)) as client:
+        for _ in range(5):
+            response = client.post("/api/analyze", json={})
+            assert response.status_code == 422
+        limited = client.post("/api/analyze", json={})
+        assert limited.status_code == 429
+        assert limited.headers["retry-after"]
+    main.app.state.rate_limit_buckets.clear()
