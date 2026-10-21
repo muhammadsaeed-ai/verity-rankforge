@@ -60,9 +60,10 @@ def test_api_dashboard_and_analysis_round_trip(tmp_path, monkeypatch):
 
 def test_api_rejects_invalid_mission_and_missing_run(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "badapi.sqlite3"))
+    monkeypatch.setenv("RANKFORGE_API_KEY", TEST_API_KEY)
     monkeypatch.setenv("RANKFORGE_PROVIDER", "demo")
     monkeypatch.setenv("RANKFORGE_AI_ANALYSIS", "false")
-    with TestClient(main.app) as client:
+    with TestClient(main.app, auth=("verityagent", TEST_API_KEY)) as client:
         bad = client.post("/api/analyze", json={"keyword": "x", "depth": 10})
         assert bad.status_code == 422
         missing = client.get("/api/runs/9999")
