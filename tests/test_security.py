@@ -33,6 +33,8 @@ def test_url_validation_rejects_nonstandard_ports(monkeypatch):
     )
     with pytest.raises(ValueError, match="standard HTTP"):
         core.validate_public_url("https://public.example:8443/")
+    with pytest.raises(ValueError, match="standard HTTP"):
+        core.validate_public_url("https://public.example:0/")
 
 
 def test_safe_open_passes_the_validated_ip_to_both_transports(monkeypatch):
