@@ -1,6 +1,7 @@
 """Security regressions for the user-supplied URL fetch boundary."""
 
 import socket
+import ssl
 
 import pytest
 
@@ -86,6 +87,13 @@ def test_pinned_connections_dial_ip_but_keep_original_tls_name(monkeypatch):
         return fake_socket
 
     class FakeSSLContext:
+        verify_mode = ssl.CERT_REQUIRED
+        check_hostname = True
+        post_handshake_auth = False
+
+        def set_alpn_protocols(self, protocols):
+            self.alpn_protocols = protocols
+
         def wrap_socket(self, sock, server_hostname):
             observed["tls_hostname"] = server_hostname
             assert sock is fake_socket
