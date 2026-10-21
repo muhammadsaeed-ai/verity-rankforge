@@ -1,9 +1,16 @@
+import base64
+
 from fastapi.testclient import TestClient
 from rankforge import core
 from rankforge import main
 
 
 TEST_API_KEY = "test-rankforge-api-key-0123456789abcdef"
+
+
+def _auth_headers(secret: str) -> dict[str, str]:
+    token = base64.b64encode(f"verityagent:{secret}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
 
 
 def test_api_dashboard_and_analysis_round_trip(tmp_path, monkeypatch):
@@ -15,7 +22,7 @@ def test_api_dashboard_and_analysis_round_trip(tmp_path, monkeypatch):
     monkeypatch.delenv("DATAFORSEO_LOGIN", raising=False)
     monkeypatch.delenv("DATAFORSEO_PASSWORD", raising=False)
 
-    with TestClient(main.app, auth=("verityagent", TEST_API_KEY)) as client:
+    with TestClient(main.app, headers=_auth_headers(TEST_API_KEY)) as client:
         health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json()["status"] == "ok"
@@ -80,7 +87,7 @@ def test_protected_routes_fail_closed_and_health_remains_public(monkeypatch):
         assert anonymous.get("/").status_code == 401
         assert anonymous.get("/api/overview").status_code == 401
 
-    with TestClient(main.app, auth=("verityagent", "wrong-rankforge-api-key-0123456789")) as wrong:
+    with TestClient(main.app, headers=_auth_headers("wrong-rankforge-api-key-0123456789")) as wrong:
         assert wrong.get("/api/overview").status_code == 401
 
     monkeypatch.delenv("RANKFORGE_API_KEY", raising=False)
