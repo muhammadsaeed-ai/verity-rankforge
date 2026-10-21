@@ -227,13 +227,14 @@ To run only the API container manually:
 
 ~~~bash
 docker build -t verity-rankforge .
-docker run --rm -p 8000:8000 \
+docker run --rm -p 127.0.0.1:8000:8000 \
+  -e RANKFORGE_API_KEY="$RANKFORGE_API_KEY" \
   -e RANKFORGE_DB_PATH=/app/data/rankforge.sqlite3 \
   -v rankforge-data:/app/data \
   verity-rankforge
 ~~~
 
-The manual container command does not run the scheduler; start a second worker process against the same database volume. The container runs as a non-root user and the API image provides a health check. Keep `.env` out of source control.
+The manual container command expects `RANKFORGE_API_KEY` to be set in your shell and does not run the scheduler; start a second worker process against the same database volume. The container runs as a non-root user and the API image provides a health check. The host port is loopback-only by default. Keep `.env` out of source control.
 
 ## Scope and limitations
 
