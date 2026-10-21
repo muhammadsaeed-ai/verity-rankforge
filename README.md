@@ -56,11 +56,13 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 cp .env.example .env
 # Windows: copy .env.example .env
+# Generate a unique secret with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Put the generated value in .env as RANKFORGE_API_KEY=<generated-secret>.
 
-uvicorn rankforge.main:app --reload
+uvicorn rankforge.main:app --reload --env-file .env
 ~~~
 
-Open http://127.0.0.1:8000. The monitoring console is at http://127.0.0.1:8000/monitoring, API documentation is at http://127.0.0.1:8000/docs, and service status is at http://127.0.0.1:8000/api/health. Start a second terminal with python -m rankforge.worker to execute saved schedules.
+Open http://127.0.0.1:8000. The dashboard, monitoring console, API docs, and all API routes except health require HTTP Basic authentication. The browser prompts for credentials: username `verityagent`, password equal to `RANKFORGE_API_KEY`. Keep this secret private and access the service only over HTTPS when it is not restricted to localhost. Service status at /api/health is public and intentionally minimal. Start a second terminal with python -m rankforge.worker to execute saved schedules.
 
 Without credentials the application uses deterministic sample results. These are **not actual rankings**. Set a provider before using data for business decisions.
 
@@ -109,28 +111,28 @@ The dashboard history supports selecting two runs for a URL-level comparison. Co
 curl http://127.0.0.1:8000/api/health
 
 # Analyze a keyword (demo mode if no provider is configured)
-curl -X POST http://127.0.0.1:8000/api/analyze \
+curl --user "verityagent:$RANKFORGE_API_KEY" -X POST http://127.0.0.1:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"keyword":"AI automation agency","website":"https://example.com","market":"United States","language":"en","depth":10}'
 
 # Audit one page
-curl -X POST http://127.0.0.1:8000/api/audit \
+curl --user "verityagent:$RANKFORGE_API_KEY" -X POST http://127.0.0.1:8000/api/audit \
   -H "Content-Type: application/json" \
   -d '{"website":"https://example.com"}'
 
 # Recent saved runs
-curl "http://127.0.0.1:8000/api/history?limit=20"
+curl --user "verityagent:$RANKFORGE_API_KEY" "http://127.0.0.1:8000/api/history?limit=20"
 
 # Full detail for run 1
-curl http://127.0.0.1:8000/api/runs/1
+curl --user "verityagent:$RANKFORGE_API_KEY" http://127.0.0.1:8000/api/runs/1
 
 # Compare runs 1 and 2
-curl -X POST http://127.0.0.1:8000/api/compare \
+curl --user "verityagent:$RANKFORGE_API_KEY" -X POST http://127.0.0.1:8000/api/compare \
   -H "Content-Type: application/json" \
   -d '{"first_run_id":1,"second_run_id":2}'
 
 # Download a CSV summary
-curl -o rankforge-history.csv "http://127.0.0.1:8000/api/export.csv?limit=100"
+curl --user "verityagent:$RANKFORGE_API_KEY" -o rankforge-history.csv "http://127.0.0.1:8000/api/export.csv?limit=100"
 ~~~
 
 ### Endpoint map
@@ -244,13 +246,13 @@ This release is a working research and diagnostics foundation, not a complete au
 - Multi-source collection compares result sets; it intentionally does not report a blended mean rank across different providers.
 - Content briefs start with deterministic drafts; optional OpenAI evidence analysis can be enabled via environment credentials. Deep page-content extraction, Search Console integration and CMS change workflows remain future work.
 - The application does not automatically edit or deploy a website, and it cannot promise rankings. The heuristic audit score is not a Google score.
-- Authentication and tenant isolation are not included. Put an authentication layer and network controls in front of any internet-facing deployment; do not run the development console as a public multi-user service.
+- The app uses one operator-shared HTTP Basic secret, not per-user identities, roles or tenant isolation. Before a public multi-user deployment, add an identity provider, enforce TLS, configure reverse-proxy rate limits, and apply outbound network controls. The built-in in-process limiter is a backstop for a single instance, not a replacement for gateway controls.
 
 ## Responsible use and security
 
 - Follow provider terms, usage limits and billing.
 - Do not rotate browsers or automate prohibited queries to evade limits or manufacture search traffic.
-- The page auditor only accepts HTTP(S), rejects local/private/reserved IP targets, revalidates redirects and caps redirect depth and HTML size. Audit only websites you are authorized to inspect.
+- The page auditor accepts HTTP(S) only, rejects non-public DNS answers, pins each fetch to a validated IP, preserves hostname-based TLS verification, disables automatic redirects, and validates each redirect hop separately. Only ports 80 and 443 are accepted. Redirect depth and response size are capped. Audit only websites you are authorized to inspect.
 - Keep secrets in environment variables or a secret manager. See SECURITY.md before deployment.
 
 ## Contributing
