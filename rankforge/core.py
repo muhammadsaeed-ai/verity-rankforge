@@ -358,7 +358,7 @@ def _resolve_public_url(url: str) -> tuple[str, list[str]]:
         explicit_port = parsed.port
     except ValueError as exc:
         raise ValueError("Website URL contains an invalid port") from exc
-    port = explicit_port or (443 if parsed.scheme == "https" else 80)
+    port = explicit_port if explicit_port is not None else (443 if parsed.scheme == "https" else 80)
     if port not in (80, 443) or (parsed.scheme == "https" and port != 443) or (parsed.scheme == "http" and port != 80):
         raise ValueError("Only standard HTTP (80) and HTTPS (443) ports can be audited")
 
