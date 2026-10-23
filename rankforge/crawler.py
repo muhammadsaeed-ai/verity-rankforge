@@ -7,8 +7,6 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from urllib.parse import urljoin, urlparse
 
-import httpx
-
 from . import core
 
 MAX_SITEMAP_BYTES = 2_000_000
@@ -90,28 +88,35 @@ def _fetch_text(url: str, hostname: str, max_bytes: int = MAX_SITEMAP_BYTES) -> 
     if not _same_host(current, hostname):
         raise ValueError("Cross-host sitemap and robots URLs are not followed.")
     headers = {"User-Agent": core.USER_AGENT, "Accept": "text/plain,application/xml,text/xml"}
-    with httpx.Client(timeout=TIMEOUT, follow_redirects=False, trust_env=False, headers=headers) as client:
-        for hop in range(4):
-            current = core.validate_public_url(current)
-            if not _same_host(current, hostname):
-                raise ValueError("Cross-host redirects are not followed.")
-            with client.stream("GET", current) as response:
-                if response.status_code in (301, 302, 303, 307, 308):
-                    location = response.headers.get("location")
-                    if not location or hop == 3:
-                        raise ValueError("Sitemap or robots URL exceeded redirect limits.")
-                    current = urljoin(current, location)
-                    continue
-                if response.status_code in (404, 410):
-                    return None
-                response.raise_for_status()
-                chunks = bytearray()
-                for chunk in response.iter_bytes():
-                    if len(chunks) + len(chunk) > max_bytes:
-                        raise ValueError("Sitemap or robots response exceeded the size limit.")
-                    chunks.extend(chunk)
-                encoding = response.encoding or "utf-8"
-                return bytes(chunks).decode(encoding, errors="replace")
+    for hop in range(4):
+        normalized, response = core.safe_open_url(current, timeout=TIMEOUT, headers=headers)
+        try:
+            status = response.getcode() or getattr(response, "code", 0)
+            if status in (301, 302, 303, 307, 308):
+                location = response.headers.get("location")
+                if not location or hop == 3:
+                    raise ValueError("Sitemap or robots URL exceeded redirect limits.")
+                current = urljoin(normalized, location)
+                if not _same_host(current, hostname):
+                    raise ValueError("Cross-host redirects are not followed.")
+                continue
+            if status in (404, 410):
+                return None
+            if status >= 400:
+                raise ValueError("Sitemap or robots endpoint returned HTTP status " + str(status))
+            chunks = bytearray()
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                if len(chunks) + len(chunk) > max_bytes:
+                    raise ValueError("Sitemap or robots response exceeded the size limit.")
+                chunks.extend(chunk)
+            headers_obj = getattr(response, "headers", None)
+            encoding = headers_obj.get_content_charset() if headers_obj is not None and hasattr(headers_obj, "get_content_charset") else None
+            return bytes(chunks).decode(encoding or "utf-8", errors="replace")
+        finally:
+            response.close()
     return None
 
 

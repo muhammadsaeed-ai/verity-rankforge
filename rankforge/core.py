@@ -1,10 +1,13 @@
 """Core SEO analysis, defensive single-page auditing, SQLite evidence and comparisons."""
 from __future__ import annotations
+import http.client
 import ipaddress
 import json
 import os
 import socket
 import sqlite3
+import urllib.error
+import urllib.request
 from collections import Counter
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -277,7 +280,72 @@ class PageParser(HTMLParser):
         self.text.append(text)
 
 
-def validate_public_url(url: str) -> str:
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection that dials a prevalidated IP, never resolving the hostname again."""
+
+    def __init__(self, host, pinned_ip, **kwargs):
+        self._pinned_ip = pinned_ip
+        super().__init__(host, **kwargs)
+
+    def connect(self):
+        self.sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address
+        )
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection pinned to an IP while retaining hostname-based TLS checks."""
+
+    def __init__(self, host, pinned_ip, **kwargs):
+        self._pinned_ip = pinned_ip
+        super().__init__(host, **kwargs)
+
+    def connect(self):
+        sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address
+        )
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+            sock = self.sock
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, pinned_ip):
+        super().__init__()
+        self._pinned_ip = pinned_ip
+
+    def http_open(self, request):
+        return self.do_open(
+            lambda host, **kwargs: _PinnedHTTPConnection(host, self._pinned_ip, **kwargs),
+            request,
+        )
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, pinned_ip):
+        super().__init__()
+        self._pinned_ip = pinned_ip
+
+    def https_open(self, request):
+        return self.do_open(
+            lambda host, **kwargs: _PinnedHTTPSConnection(host, self._pinned_ip, **kwargs),
+            request,
+            context=self._context,
+            check_hostname=self._check_hostname,
+        )
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Each redirect must be validated and pinned independently by the caller."""
+
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        return None
+
+
+def _resolve_public_url(url: str) -> tuple[str, list[str]]:
+    """Normalize an HTTP(S) URL and return only IPs safe to dial directly."""
     raw = url.strip()
     if not raw.startswith(("http://", "https://")):
         raw = "https://" + raw
@@ -286,18 +354,79 @@ def validate_public_url(url: str) -> str:
         raise ValueError("Enter a valid http(s) website URL")
     if parsed.username or parsed.password:
         raise ValueError("URLs containing embedded credentials are not allowed")
+    try:
+        explicit_port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Website URL contains an invalid port") from exc
+    port = explicit_port if explicit_port is not None else (443 if parsed.scheme == "https" else 80)
+    if port not in (80, 443) or (parsed.scheme == "https" and port != 443) or (parsed.scheme == "http" and port != 80):
+        raise ValueError("Only standard HTTP (80) and HTTPS (443) ports can be audited")
+
     host = parsed.hostname.rstrip(".").lower()
     if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
         raise ValueError("Private and local hosts cannot be audited")
     try:
-        records = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise ValueError("The hostname could not be resolved") from exc
+
+    addresses = []
     for record in records:
-        addr = ipaddress.ip_address(record[4][0].split("%", 1)[0])
-        if not addr.is_global:
+        try:
+            address = ipaddress.ip_address(record[4][0].split("%", 1)[0])
+        except ValueError as exc:
+            raise ValueError("The hostname resolved to an invalid IP address") from exc
+        # Reject the whole hostname if any A/AAAA answer is not publicly routable.
+        if not address.is_global:
             raise ValueError("Private, reserved, or non-public IP addresses cannot be audited")
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", parsed.query, ""))
+        candidate = address.compressed
+        if candidate not in addresses:
+            addresses.append(candidate)
+    if not addresses:
+        raise ValueError("The hostname did not resolve to a public IP address")
+
+    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", "", parsed.query, ""))
+    return normalized, addresses
+
+
+def validate_public_url(url: str) -> str:
+    """Validate a website URL before use; connection-time callers should use safe_open_url."""
+    normalized, _addresses = _resolve_public_url(url)
+    return normalized
+
+
+def safe_open_url(
+    url: str,
+    timeout: float = TIMEOUT,
+    headers: dict[str, str] | None = None,
+):
+    """Open a single HTTP(S) response with DNS IP pinning and automatic redirects disabled.
+
+    The chosen destination is one of the exact public IP addresses validated during
+    this call. TLS still verifies the original hostname. Callers must close the
+    returned response and manually validate every redirect before following it.
+    """
+    normalized, addresses = _resolve_public_url(url)
+    request_headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+    if headers:
+        request_headers.update(headers)
+    request = urllib.request.Request(normalized, headers=request_headers, method="GET")
+    last_error = None
+    for address in addresses:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _PinnedHTTPHandler(address),
+            _PinnedHTTPSHandler(address),
+            _NoRedirectHandler(),
+        )
+        try:
+            return normalized, opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError as response:
+            # Preserve 3xx/4xx response metadata for bounded, explicit caller handling.
+            return normalized, response
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            last_error = exc
+    raise ValueError("Could not connect to the validated public website") from last_error
 
 
 def audit_website(website: str) -> dict:
@@ -307,34 +436,43 @@ def audit_website(website: str) -> dict:
     content_type = ""
     html_text = ""
     timeout = TIMEOUT
-    with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}) as client:
-        for hop in range(6):
-            current = validate_public_url(current)
-            with client.stream("GET", current) as response:
-                if response.status_code in (301, 302, 303, 307, 308):
-                    location = response.headers.get("location")
-                    if not location:
-                        raise ValueError("Website returned a redirect without a Location header")
-                    if hop == 5:
-                        raise ValueError("Website exceeded the redirect limit")
-                    current = urljoin(current, location)
-                    continue
-                response.raise_for_status()
-                response_status = response.status_code
-                final_url = str(response.url)
-                content_type = response.headers.get("content-type", "")
-                if "html" not in content_type.lower():
-                    raise ValueError("URL did not return HTML (content-type: " + (content_type or "unknown") + ")")
-                chunks = bytearray()
-                for chunk in response.iter_bytes():
-                    if len(chunks) + len(chunk) > MAX_HTML_BYTES:
-                        raise ValueError("Page exceeded the 3 MB audit limit")
-                    chunks.extend(chunk)
-                encoding = response.encoding or "utf-8"
-                html_text = bytes(chunks).decode(encoding, errors="replace")
-                break
-        else:
-            raise ValueError("Website exceeded the redirect limit")
+    request_headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+    for hop in range(6):
+        normalized, response = safe_open_url(current, timeout=timeout, headers=request_headers)
+        try:
+            status = response.getcode() or getattr(response, "code", 0)
+            if status in (301, 302, 303, 307, 308):
+                location = response.headers.get("location")
+                if not location:
+                    raise ValueError("Website returned a redirect without a Location header")
+                if hop == 5:
+                    raise ValueError("Website exceeded the redirect limit")
+                current = urljoin(normalized, location)
+                continue
+            if status >= 400:
+                raise ValueError("Website returned HTTP status " + str(status))
+            response_status = status
+            final_url = normalized
+            content_type = response.headers.get("content-type", "")
+            if "html" not in content_type.lower():
+                raise ValueError("URL did not return HTML (content-type: " + (content_type or "unknown") + ")")
+            chunks = bytearray()
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                if len(chunks) + len(chunk) > MAX_HTML_BYTES:
+                    raise ValueError("Page exceeded the 3 MB audit limit")
+                chunks.extend(chunk)
+            headers = getattr(response, "headers", None)
+            encoding = headers.get_content_charset() if headers is not None and hasattr(headers, "get_content_charset") else None
+            html_text = bytes(chunks).decode(encoding or "utf-8", errors="replace")
+            current = normalized
+            break
+        finally:
+            response.close()
+    else:
+        raise ValueError("Website exceeded the redirect limit")
     parser = PageParser()
     parser.feed(html_text)
     parser.close()

@@ -1,3 +1,5 @@
+import base64
+
 from fastapi.testclient import TestClient
 
 from rankforge import core, crawler, monitoring, main
@@ -124,9 +126,11 @@ def test_monitoring_missions_are_durable_and_leased(tmp_path, monkeypatch):
 
 def test_monitoring_api_and_console_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "api-monitor.sqlite3"))
+    monkeypatch.setenv("RANKFORGE_API_KEY", "test-rankforge-api-key-0123456789abcdef")
     monkeypatch.setenv("RANKFORGE_PROVIDER", "demo")
     monkeypatch.setenv("RANKFORGE_AI_ANALYSIS", "false")
-    with TestClient(main.app) as client:
+    token = base64.b64encode(b"verityagent:test-rankforge-api-key-0123456789abcdef").decode("ascii")
+    with TestClient(main.app, headers={"Authorization": f"Basic {token}"}) as client:
         response = client.post("/api/missions", json={
             "keyword": "AI automation agency",
             "market": "United States",

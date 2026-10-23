@@ -1,10 +1,17 @@
 from __future__ import annotations
+import base64
+import binascii
 import csv
+import hmac
 import io
+import os
+import threading
+import time
+from collections import deque
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -14,6 +21,84 @@ from .providers import ProviderError, get_provider
 app = FastAPI(title="Verity RankForge API", version=__version__,
               description="Evidence-led keyword research, single-page SEO checks, content briefs and saved result comparisons.")
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+# A browser login protects the dashboard and API without shipping a secret into
+# frontend JavaScript. The shared API secret is supplied by the operator only.
+_AUTH_USERNAME = "verityagent"
+_PUBLIC_PATHS = {"/api/health"}
+_RATE_WINDOW_SECONDS = 60.0
+_RATE_LIMITS = {"general": 60, "expensive": 5}
+_EXPENSIVE_PATHS = {"/api/analyze", "/api/audit", "/api/crawl"}
+app.state.rate_limit_buckets = {}
+app.state.rate_limit_lock = threading.Lock()
+
+
+def _decode_basic_auth(header: str | None) -> tuple[str, str] | None:
+    if not header or not header.lower().startswith("basic "):
+        return None
+    try:
+        raw = base64.b64decode(header.split(None, 1)[1], validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        return None
+    if ":" not in raw:
+        return None
+    return tuple(raw.split(":", 1))
+
+
+@app.middleware("http")
+async def secure_application(request: Request, call_next):
+    """Fail closed without operator credentials; rate-limit authenticated API callers."""
+    if request.url.path not in _PUBLIC_PATHS:
+        expected = os.getenv("RANKFORGE_API_KEY", "").strip()
+        if len(expected) < 32:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Protected routes are disabled. Configure RANKFORGE_API_KEY with at least 32 characters."},
+            )
+
+        credentials = _decode_basic_auth(request.headers.get("authorization"))
+        if (
+            credentials is None
+            or not hmac.compare_digest(credentials[0].encode("utf-8"), _AUTH_USERNAME.encode("utf-8"))
+            or not hmac.compare_digest(credentials[1].encode("utf-8"), expected.encode("utf-8"))
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid credentials."},
+                headers={"WWW-Authenticate": 'Basic realm="Verity RankForge", charset="UTF-8"'},
+            )
+
+        if request.url.path.startswith("/api/"):
+            path = request.url.path
+            expensive = (
+                request.method == "POST"
+                and (path in _EXPENSIVE_PATHS or (path.startswith("/api/missions/") and path.endswith("/run")))
+            )
+            bucket_kind = "expensive" if expensive else "general"
+            address = request.client.host if request.client else "unknown"
+            now = time.monotonic()
+            key = (address, bucket_kind)
+            with app.state.rate_limit_lock:
+                buckets = app.state.rate_limit_buckets
+                bucket = buckets.setdefault(key, deque())
+                while bucket and now - bucket[0] >= _RATE_WINDOW_SECONDS:
+                    bucket.popleft()
+                limit = _RATE_LIMITS[bucket_kind]
+                if len(bucket) >= limit:
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Rate limit exceeded. Retry after the current one-minute window."},
+                        headers={"Retry-After": str(max(1, int(_RATE_WINDOW_SECONDS - (now - bucket[0]))))},
+                    )
+                bucket.append(now)
+                # Bound memory if a local reverse proxy or hostile authenticated
+                # client causes many distinct source addresses to be observed.
+                if len(buckets) > 4096:
+                    stale_before = now - _RATE_WINDOW_SECONDS
+                    for old_key, old_bucket in list(buckets.items()):
+                        if not old_bucket or old_bucket[-1] < stale_before:
+                            buckets.pop(old_key, None)
+    return await call_next(request)
 
 
 class AnalyzeRequest(BaseModel):
